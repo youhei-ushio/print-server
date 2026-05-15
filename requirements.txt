@@ -1,0 +1,14 @@
+# プリントサーバー依存関係 - クリーン実装
+# 仕様書: docs/print-server-specification.md
+
+# データベース接続
+pyodbc>=4.0.35
+
+# 環境変数ファイル読み込み
+python-dotenv>=1.0.0
+
+# ログローテーション（標準ライブラリに含まれているが、明示的に記載）
+# logging.handlers
+
+# Windows印刷サポート（Windows環境でのみ必要）
+# pywin32>=306  # オプション: より高度なWindows API使用時

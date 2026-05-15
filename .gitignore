@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 仮想環境
+venv/
+.venv/
+env/
+ENV/
+
+# 環境変数（秘密情報）
+.env
+.env.local
+.env.*.local
+
+# ログ
+logs/
+*.log
+*.log.*
+
+# WSL / Windows メタデータ
+*:Zone.Identifier
+
+# IDE / エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# テスト / カバレッジ
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# 一時ファイル
+*.tmp
+*.bak
