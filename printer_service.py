@@ -5,9 +5,57 @@
 
 import subprocess
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
+from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 from config import PrintServerConfig
 import os
+
+# paper_height クエリ仕様 (ADR docs/adr/0001-dynamic-paper-height.md)
+PAPER_HEIGHT_MAX_MM = 3000
+MM_PER_INCH = 25.4
+
+
+def extract_paper_height(url: str) -> Tuple[str, Optional[str], str]:
+    """印刷 URL から paper_height クエリを取り出し、Chrome 引数と監査用ラベルを返す。
+
+    Returns:
+        (cleaned_url, chrome_arg, log_label)
+            cleaned_url : paper_height クエリを除去した URL (Chrome に渡す)
+            chrome_arg  : --print-to-pdf-paper-height=<inch> 文字列。引数を渡さない場合は None
+            log_label   : ジョブログ用の人間可読ラベル ("omitted" / "auto" / "250mm" 等)
+
+    Raises:
+        ValueError: paper_height の値が仕様 (auto または 1..3000 の整数) を満たさないとき
+    """
+    parsed = urlparse(url)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+
+    paper_height_values = [v for k, v in query_pairs if k == 'paper_height']
+    remaining_pairs = [(k, v) for k, v in query_pairs if k != 'paper_height']
+
+    cleaned_url = urlunparse(parsed._replace(query=urlencode(remaining_pairs)))
+
+    if not paper_height_values:
+        return cleaned_url, None, 'omitted'
+
+    if len(paper_height_values) > 1:
+        raise ValueError(f"paper_height specified multiple times: {paper_height_values}")
+
+    value = paper_height_values[0].strip()
+
+    if value == 'auto':
+        return cleaned_url, None, 'auto'
+
+    try:
+        mm = int(value)
+    except ValueError:
+        raise ValueError(f"paper_height must be 'auto' or an integer in mm: got {value!r}")
+
+    if mm < 1 or mm > PAPER_HEIGHT_MAX_MM:
+        raise ValueError(f"paper_height out of range (1..{PAPER_HEIGHT_MAX_MM} mm): {mm}")
+
+    inch = mm / MM_PER_INCH
+    return cleaned_url, f"--print-to-pdf-paper-height={inch:.5f}", f"{mm}mm"
 
 class PrinterService:
     """印刷処理サービス"""
@@ -23,8 +71,21 @@ class PrinterService:
             self.logger.info(f"Print URL: {print_url}")
             self.logger.info(f"Target printer: {printer_name}")
 
+            # paper_height クエリを抽出 (ADR 0001)
+            try:
+                cleaned_url, paper_height_arg, paper_height_label = extract_paper_height(print_url)
+            except ValueError as e:
+                error_msg = f"invalid paper_height: {e}"
+                self.logger.error(error_msg)
+                return False, error_msg
+
+            if paper_height_arg:
+                self.logger.info(f"paper_height: {paper_height_label} -> {paper_height_arg}")
+            else:
+                self.logger.info(f"paper_height: {paper_height_label} (--print-to-pdf-paper-height omitted)")
+
             # 印刷用URLに認証トークンを追加
-            auth_print_url = self._add_auth_token(print_url)
+            auth_print_url = self._add_auth_token(cleaned_url)
 
             # PDFファイル名を生成
             import tempfile
@@ -33,12 +94,16 @@ class PrinterService:
             temp_pdf_path = temp_pdf.name
             temp_pdf.close()
 
-            # Chrome実行パスを確認（PDFに出力）
-            chrome_command = self.config.chrome_command_base + [
+            # Chrome実行コマンドを組み立て (paper_height は paper_height_arg がある場合のみ追加)
+            chrome_extra_args = [
                 f'--print-to-pdf={temp_pdf_path}',
                 '--disable-print-preview',
-                auth_print_url
             ]
+            if paper_height_arg:
+                chrome_extra_args.append(paper_height_arg)
+            chrome_extra_args.append(auth_print_url)
+
+            chrome_command = self.config.chrome_command_base + chrome_extra_args
             chrome_path = chrome_command[0]
 
             # Chrome実行ファイルの存在確認
