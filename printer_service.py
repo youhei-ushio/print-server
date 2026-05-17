@@ -57,6 +57,28 @@ def extract_paper_height(url: str) -> Tuple[str, Optional[str], str]:
     inch = mm / MM_PER_INCH
     return cleaned_url, f"--print-to-pdf-paper-height={inch:.5f}", f"{mm}mm"
 
+
+def build_chrome_command(
+    chrome_command_base: list,
+    temp_pdf_path: str,
+    paper_height_arg: Optional[str],
+    auth_print_url: str,
+) -> list:
+    """Chrome 実行コマンドの最終形を組み立てる。
+
+    paper_height_arg が None の場合は --print-to-pdf-paper-height を引数に含めない。
+    URL は常に最後尾。
+    """
+    extra_args = [
+        f'--print-to-pdf={temp_pdf_path}',
+        '--disable-print-preview',
+    ]
+    if paper_height_arg:
+        extra_args.append(paper_height_arg)
+    extra_args.append(auth_print_url)
+    return list(chrome_command_base) + extra_args
+
+
 class PrinterService:
     """印刷処理サービス"""
 
@@ -64,8 +86,15 @@ class PrinterService:
         self.config = PrintServerConfig()
         self.logger = logging.getLogger(__name__)
 
-    def print_web_url(self, print_url: str, printer_name: str, job_name: str = "Web Print") -> Tuple[bool, str]:
-        """Web URLを直接印刷"""
+    def print_web_url(self, print_url: str, printer_name: str, job_name: str = "Web Print") -> Tuple[bool, str, bool]:
+        """Web URLを直接印刷
+
+        Returns:
+            (success, message, retryable)
+                retryable: 失敗時にキュー側で再試行してよいか。
+                           入力起因の恒久エラー (invalid paper_height 等) は False。
+                           成功時の値は意味を持たない (True を返す)。
+        """
         try:
             self.logger.info(f"Starting web print job: {job_name}")
             self.logger.info(f"Print URL: {print_url}")
@@ -77,7 +106,7 @@ class PrinterService:
             except ValueError as e:
                 error_msg = f"invalid paper_height: {e}"
                 self.logger.error(error_msg)
-                return False, error_msg
+                return False, error_msg, False  # 入力が直らない限り再試行しても無駄
 
             if paper_height_arg:
                 self.logger.info(f"paper_height: {paper_height_label} -> {paper_height_arg}")
@@ -95,22 +124,19 @@ class PrinterService:
             temp_pdf.close()
 
             # Chrome実行コマンドを組み立て (paper_height は paper_height_arg がある場合のみ追加)
-            chrome_extra_args = [
-                f'--print-to-pdf={temp_pdf_path}',
-                '--disable-print-preview',
-            ]
-            if paper_height_arg:
-                chrome_extra_args.append(paper_height_arg)
-            chrome_extra_args.append(auth_print_url)
-
-            chrome_command = self.config.chrome_command_base + chrome_extra_args
+            chrome_command = build_chrome_command(
+                self.config.chrome_command_base,
+                temp_pdf_path,
+                paper_height_arg,
+                auth_print_url,
+            )
             chrome_path = chrome_command[0]
 
             # Chrome実行ファイルの存在確認
             if not self._chrome_exists(chrome_path):
                 error_msg = f"Chrome executable not found: {chrome_path}"
                 self.logger.error(error_msg)
-                return False, error_msg
+                return False, error_msg, True
 
             self.logger.info(f"Using Chrome: {chrome_path}")
             self.logger.info(f"Target printer: {printer_name}")
@@ -168,18 +194,18 @@ class PrinterService:
                         self.logger.error("Generated PDF is empty (0 bytes)")
                         self.logger.error(f"Chrome STDOUT: {result.stdout}")
                         self.logger.error(f"Chrome STDERR: {result.stderr}")
-                        return False, "PDFファイルが空です"
+                        return False, "PDFファイルが空です", True
                 else:
                     self.logger.error(f"PDF file not created: {temp_pdf_path}")
-                    return False, "PDFファイルが作成されませんでした"
+                    return False, "PDFファイルが作成されませんでした", True
 
                 try:
                     # PDFをプリンターに送信（Windows）
                     if self._print_pdf_to_printer(temp_pdf_path, printer_name):
                         self.logger.info(f"PDF printed successfully to {printer_name}")
-                        return True, "Web印刷完了"
+                        return True, "Web印刷完了", True
                     else:
-                        return False, "プリンターへの送信に失敗しました"
+                        return False, "プリンターへの送信に失敗しました", True
                 finally:
                     # 一時ファイルを削除（成功時のみ）
                     if os.path.exists(temp_pdf_path):
@@ -194,17 +220,17 @@ class PrinterService:
                 # 一時ファイルを削除
                 if os.path.exists(temp_pdf_path):
                     os.remove(temp_pdf_path)
-                return False, error_msg
+                return False, error_msg, True
 
         except subprocess.TimeoutExpired:
             error_msg = f"Print job timed out after {self.config.PRINT_TIMEOUT} seconds"
             self.logger.error(error_msg)
-            return False, error_msg
+            return False, error_msg, True
 
         except Exception as e:
             error_msg = f"Print job failed: {str(e)}"
             self.logger.error(error_msg)
-            return False, error_msg
+            return False, error_msg, True
 
     def _chrome_exists(self, chrome_path: str) -> bool:
         """Chrome実行ファイルの存在確認"""

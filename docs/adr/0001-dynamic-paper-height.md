@@ -53,6 +53,9 @@ CHROME_ARGS = [
 - 許容値: `auto` または `1 ≦ N ≦ 3000` の整数
 - 不正値 (数値以外・負数・ゼロ・上限超過) はジョブを **失敗扱い** とし、
   `print_queue.error_message` に「invalid paper_height」を記録する
+- 入力起因の恒久エラーであり、URL が変わらない限り再試行しても直らないため、
+  `PrinterService.print_web_url` の戻り値で `retryable=False` を返し、
+  `QueueProcessor` 側はリトライ上限を待たずに即 `Failed` ステータスに落とす
 
 ### Chrome に渡す URL の扱い
 

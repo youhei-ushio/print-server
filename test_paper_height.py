@@ -1,10 +1,10 @@
 """
-extract_paper_height のユニットテスト
+extract_paper_height / build_chrome_command のユニットテスト
 仕様: docs/adr/0001-dynamic-paper-height.md
 """
 
 import unittest
-from printer_service import extract_paper_height
+from printer_service import extract_paper_height, build_chrome_command
 
 
 class ExtractPaperHeightTest(unittest.TestCase):
@@ -93,6 +93,67 @@ class ExtractPaperHeightTest(unittest.TestCase):
         url = "http://example.test/print/label/1?paper_height=auto#section"
         cleaned, _, _ = extract_paper_height(url)
         self.assertEqual(cleaned, "http://example.test/print/label/1#section")
+
+
+class BuildChromeCommandTest(unittest.TestCase):
+    """Chrome 引数組み立てロジックの単体テスト (subprocess を呼ばず純粋関数として検証)"""
+
+    BASE = ['chrome', '--headless=new', '--print-to-pdf-paper-width=3.14961']
+
+    def test_with_paper_height_includes_arg_before_url(self):
+        cmd = build_chrome_command(
+            self.BASE,
+            temp_pdf_path='/tmp/out.pdf',
+            paper_height_arg='--print-to-pdf-paper-height=9.84252',
+            auth_print_url='http://example.test/label/1?print_token=abc',
+        )
+        self.assertEqual(cmd, [
+            'chrome',
+            '--headless=new',
+            '--print-to-pdf-paper-width=3.14961',
+            '--print-to-pdf=/tmp/out.pdf',
+            '--disable-print-preview',
+            '--print-to-pdf-paper-height=9.84252',
+            'http://example.test/label/1?print_token=abc',
+        ])
+
+    def test_without_paper_height_omits_arg(self):
+        cmd = build_chrome_command(
+            self.BASE,
+            temp_pdf_path='/tmp/out.pdf',
+            paper_height_arg=None,
+            auth_print_url='http://example.test/label/1',
+        )
+        self.assertEqual(cmd, [
+            'chrome',
+            '--headless=new',
+            '--print-to-pdf-paper-width=3.14961',
+            '--print-to-pdf=/tmp/out.pdf',
+            '--disable-print-preview',
+            'http://example.test/label/1',
+        ])
+        # paper_height 引数が一切混入していないこと
+        for token in cmd:
+            self.assertFalse(token.startswith('--print-to-pdf-paper-height'))
+
+    def test_url_is_always_last(self):
+        cmd = build_chrome_command(
+            self.BASE,
+            temp_pdf_path='/tmp/out.pdf',
+            paper_height_arg='--print-to-pdf-paper-height=1.96850',
+            auth_print_url='http://example.test/x',
+        )
+        self.assertEqual(cmd[-1], 'http://example.test/x')
+
+    def test_does_not_mutate_base(self):
+        base = list(self.BASE)
+        build_chrome_command(
+            base,
+            temp_pdf_path='/tmp/out.pdf',
+            paper_height_arg='--print-to-pdf-paper-height=9.84252',
+            auth_print_url='http://example.test/',
+        )
+        self.assertEqual(base, self.BASE)
 
 
 if __name__ == '__main__':
