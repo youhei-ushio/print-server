@@ -80,49 +80,50 @@ class QueueProcessor:
             )
             
             # 印刷実行
-            success, message = self.printer_service.print_web_url(
+            success, message, retryable = self.printer_service.print_web_url(
                 job['PrintUrl'],
                 job['PrinterName'],
                 job_name
             )
-            
+
             if success:
                 # 成功
                 self.db_manager.update_job_status(job_id, 'Completed')
                 self.db_manager.add_print_log(
-                    job_id, 
-                    job['PrinterId'], 
-                    'Info', 
+                    job_id,
+                    job['PrinterId'],
+                    'Info',
                     f"印刷完了: {message}"
                 )
                 self.logger.info(f"Job {job_id} completed successfully")
-                
+
             else:
-                # 失敗 - リトライ判定
+                # 失敗 - リトライ判定 (恒久エラーはリトライ上限を待たずに Failed)
                 retry_count = job['RetryCount']
                 max_retry = job['MaxRetryCount']
-                
-                if retry_count < max_retry:
+
+                if retryable and retry_count < max_retry:
                     # リトライ
                     self.db_manager.update_job_status(job_id, 'Pending', message, increment_retry=True)
                     self.db_manager.add_print_log(
-                        job_id, 
-                        job['PrinterId'], 
-                        'Warning', 
+                        job_id,
+                        job['PrinterId'],
+                        'Warning',
                         f"印刷失敗、リトライ {retry_count + 1}/{max_retry}: {message}"
                     )
                     self.logger.warning(f"Job {job_id} failed, retry {retry_count + 1}/{max_retry}: {message}")
-                    
+
                 else:
-                    # 最終失敗
+                    # 最終失敗 (リトライ上限到達 or 恒久エラー)
                     self.db_manager.update_job_status(job_id, 'Failed', message)
+                    failure_kind = "恒久エラー" if not retryable else "印刷最終失敗"
                     self.db_manager.add_print_log(
-                        job_id, 
-                        job['PrinterId'], 
-                        'Error', 
-                        f"印刷最終失敗: {message}"
+                        job_id,
+                        job['PrinterId'],
+                        'Error',
+                        f"{failure_kind}: {message}"
                     )
-                    self.logger.error(f"Job {job_id} failed permanently: {message}")
+                    self.logger.error(f"Job {job_id} failed permanently ({failure_kind}): {message}")
                     
         except Exception as e:
             error_msg = f"Job processing error: {str(e)}"
