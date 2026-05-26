@@ -311,7 +311,7 @@ class PrinterService:
         # 認証トークンが設定されていない場合は元のURLをそのまま返す
         return print_url
 
-    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = 'fit') -> bool:
+    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE) -> bool:
         """PDFファイルをプリンターに送信（Windows）。
 
         scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
