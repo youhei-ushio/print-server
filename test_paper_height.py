@@ -212,6 +212,11 @@ class ExtractPrintScaleTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_print_scale("http://example.test/?print_scale=")
 
+    def test_whitespace_only_is_rejected(self):
+        # %20 のみ → strip 後に空文字となり許容値に一致しない
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=%20")
+
     def test_uppercase_is_rejected(self):
         # 完全一致判定。'Noscale' 等は許容しない (誤送信を握りつぶさない)
         with self.assertRaises(ValueError):

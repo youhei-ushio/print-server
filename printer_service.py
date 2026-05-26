@@ -348,6 +348,12 @@ class PrinterService:
                     ]
                 elif pdf_reader and 'AcroRd32' in pdf_reader:
                     # Adobe Readerの場合
+                    # print_scale は SumatraPDF 経路でのみ反映される。フォールバック時に
+                    # noscale 等が黙って無視されると実機での原因追跡が困難なため警告を残す。
+                    if scale != DEFAULT_PRINT_SCALE:
+                        self.logger.warning(
+                            f"print_scale={scale} requested but ignored on Adobe Reader path"
+                        )
                     print_command = [
                         pdf_reader,
                         '/t', pdf_path, printer_name
@@ -356,6 +362,10 @@ class PrinterService:
                     # 代替方法: PowerShellでPDFを既定のアプリケーションで開いて印刷
                     # まずPDFビューアーがインストールされているか確認
                     self.logger.warning("No PDF reader found, trying Windows Shell print")
+                    if scale != DEFAULT_PRINT_SCALE:
+                        self.logger.warning(
+                            f"print_scale={scale} requested but ignored on Windows Shell print path"
+                        )
                     print_command = [
                         'powershell.exe', '-Command',
                         f'(New-Object -ComObject Shell.Application).ShellExecute("{pdf_path}", "print", "", "{printer_name}", 0)'
