@@ -79,6 +79,56 @@ def build_chrome_command(
     return list(chrome_command_base) + extra_args
 
 
+# print_scale クエリ仕様 (ADR docs/adr/0002-print-scale-query.md)
+ALLOWED_PRINT_SCALES = ('fit', 'noscale')
+DEFAULT_PRINT_SCALE = 'fit'
+
+
+def extract_print_scale(url: str) -> Tuple[str, str]:
+    """印刷 URL から print_scale クエリを取り出し、SumatraPDF の縮尺トークンを返す。
+
+    paper_height とは独立した軸 (高さ ≠ 縮尺) として扱う。梱包ラベルのような
+    可変長ロール紙を等倍印刷したい場合に呼び出し側が `?print_scale=noscale` を付ける。
+
+    Returns:
+        (cleaned_url, scale)
+            cleaned_url : print_scale クエリを除去した URL (Chrome に渡す)
+            scale       : SumatraPDF の縮尺トークン ('fit' / 'noscale')。未指定は 'fit'。
+
+    Raises:
+        ValueError: print_scale が複数指定、または許容値 (fit / noscale) 以外のとき
+    """
+    parsed = urlparse(url)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+
+    scale_values = [v for k, v in query_pairs if k == 'print_scale']
+    remaining_pairs = [(k, v) for k, v in query_pairs if k != 'print_scale']
+
+    cleaned_url = urlunparse(parsed._replace(query=urlencode(remaining_pairs)))
+
+    if not scale_values:
+        return cleaned_url, DEFAULT_PRINT_SCALE
+
+    if len(scale_values) > 1:
+        raise ValueError(f"print_scale specified multiple times: {scale_values}")
+
+    value = scale_values[0].strip()
+    if value not in ALLOWED_PRINT_SCALES:
+        raise ValueError(
+            f"print_scale must be one of {ALLOWED_PRINT_SCALES}: got {value!r}"
+        )
+    return cleaned_url, value
+
+
+def build_sumatra_print_settings(scale: str) -> str:
+    """SumatraPDF の -print-settings 値を組み立てる。
+
+    用紙フォーム名・向きの固定部 'paper=MKラベル,portrait,' は不変で、末尾の縮尺
+    トークン (scale) のみを差し替える。'fit' が既定 (従来挙動)、'noscale' で等倍印刷。
+    """
+    return f'paper=MKラベル,portrait,{scale}'
+
+
 class PrinterService:
     """印刷処理サービス"""
 
@@ -112,6 +162,15 @@ class PrinterService:
                 self.logger.info(f"paper_height: {paper_height_label} -> {paper_height_arg}")
             else:
                 self.logger.info(f"paper_height: {paper_height_label} (--print-to-pdf-paper-height omitted)")
+
+            # print_scale クエリを抽出 (ADR 0002)。Chrome へ渡す URL からは除去する。
+            try:
+                cleaned_url, print_scale = extract_print_scale(cleaned_url)
+            except ValueError as e:
+                error_msg = f"invalid print_scale: {e}"
+                self.logger.error(error_msg)
+                return False, error_msg, False  # 入力が直らない限り再試行しても無駄
+            self.logger.info(f"print_scale: {print_scale}")
 
             # 印刷用URLに認証トークンを追加
             auth_print_url = self._add_auth_token(cleaned_url)
@@ -201,7 +260,7 @@ class PrinterService:
 
                 try:
                     # PDFをプリンターに送信（Windows）
-                    if self._print_pdf_to_printer(temp_pdf_path, printer_name):
+                    if self._print_pdf_to_printer(temp_pdf_path, printer_name, print_scale):
                         self.logger.info(f"PDF printed successfully to {printer_name}")
                         return True, "Web印刷完了", True
                     else:
@@ -252,8 +311,12 @@ class PrinterService:
         # 認証トークンが設定されていない場合は元のURLをそのまま返す
         return print_url
 
-    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str) -> bool:
-        """PDFファイルをプリンターに送信（Windows）"""
+    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE) -> bool:
+        """PDFファイルをプリンターに送信（Windows）。
+
+        scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
+               梱包ラベル等の可変長ロール紙を等倍印刷したいときは 'noscale' を渡す。
+        """
         try:
             import platform
 
@@ -279,12 +342,18 @@ class PrinterService:
                     print_command = [
                         pdf_reader,
                         '-print-to', printer_name,
-                        '-print-settings', 'paper=MKラベル,portrait,fit',
+                        '-print-settings', build_sumatra_print_settings(scale),
                         '-silent',
                         pdf_path
                     ]
                 elif pdf_reader and 'AcroRd32' in pdf_reader:
                     # Adobe Readerの場合
+                    # print_scale は SumatraPDF 経路でのみ反映される。フォールバック時に
+                    # noscale 等が黙って無視されると実機での原因追跡が困難なため警告を残す。
+                    if scale != DEFAULT_PRINT_SCALE:
+                        self.logger.warning(
+                            f"print_scale={scale} requested but ignored on Adobe Reader path"
+                        )
                     print_command = [
                         pdf_reader,
                         '/t', pdf_path, printer_name
@@ -293,6 +362,10 @@ class PrinterService:
                     # 代替方法: PowerShellでPDFを既定のアプリケーションで開いて印刷
                     # まずPDFビューアーがインストールされているか確認
                     self.logger.warning("No PDF reader found, trying Windows Shell print")
+                    if scale != DEFAULT_PRINT_SCALE:
+                        self.logger.warning(
+                            f"print_scale={scale} requested but ignored on Windows Shell print path"
+                        )
                     print_command = [
                         'powershell.exe', '-Command',
                         f'(New-Object -ComObject Shell.Application).ShellExecute("{pdf_path}", "print", "", "{printer_name}", 0)'

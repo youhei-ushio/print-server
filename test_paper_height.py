@@ -1,10 +1,16 @@
 """
-extract_paper_height / build_chrome_command のユニットテスト
-仕様: docs/adr/0001-dynamic-paper-height.md
+extract_paper_height / build_chrome_command / extract_print_scale /
+build_sumatra_print_settings のユニットテスト
+仕様: docs/adr/0001-dynamic-paper-height.md, docs/adr/0002-print-scale-query.md
 """
 
 import unittest
-from printer_service import extract_paper_height, build_chrome_command
+from printer_service import (
+    extract_paper_height,
+    build_chrome_command,
+    extract_print_scale,
+    build_sumatra_print_settings,
+)
 
 
 class ExtractPaperHeightTest(unittest.TestCase):
@@ -154,6 +160,100 @@ class BuildChromeCommandTest(unittest.TestCase):
             auth_print_url='http://example.test/',
         )
         self.assertEqual(base, self.BASE)
+
+
+class ExtractPrintScaleTest(unittest.TestCase):
+    """print_scale クエリ抽出ロジックの単体テスト (ADR 0002)"""
+
+    def test_omitted_defaults_to_fit(self):
+        url = "http://example.test/print/label/1?print_token=abc"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, url)
+        self.assertEqual(scale, 'fit')
+
+    def test_omitted_with_no_query_defaults_to_fit(self):
+        url = "http://example.test/print/label/1"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, url)
+        self.assertEqual(scale, 'fit')
+
+    def test_noscale_strips_query(self):
+        url = "http://example.test/print/label/1?print_scale=noscale"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, "http://example.test/print/label/1")
+        self.assertEqual(scale, 'noscale')
+
+    def test_fit_strips_query(self):
+        url = "http://example.test/print/label/1?print_scale=fit"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, "http://example.test/print/label/1")
+        self.assertEqual(scale, 'fit')
+
+    def test_preserves_other_query_params(self):
+        url = "http://example.test/print/label/1?print_token=abc&print_scale=noscale&other=z"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, "http://example.test/print/label/1?print_token=abc&other=z")
+        self.assertEqual(scale, 'noscale')
+
+    def test_coexists_with_paper_height_via_chaining(self):
+        # 実運用の経路: extract_paper_height で paper_height を除去した URL を
+        # extract_print_scale に渡す。両クエリが共存しても双方除去できること。
+        url = "http://example.test/label/1?paper_height=auto&print_scale=noscale&print_token=abc"
+        cleaned, _, _ = extract_paper_height(url)
+        cleaned, scale = extract_print_scale(cleaned)
+        self.assertEqual(cleaned, "http://example.test/label/1?print_token=abc")
+        self.assertEqual(scale, 'noscale')
+
+    def test_unknown_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=shrink")
+
+    def test_empty_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=")
+
+    def test_whitespace_only_is_rejected(self):
+        # %20 のみ → strip 後に空文字となり許容値に一致しない
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=%20")
+
+    def test_uppercase_is_rejected(self):
+        # 完全一致判定。'Noscale' 等は許容しない (誤送信を握りつぶさない)
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=Noscale")
+
+    def test_multiple_print_scale_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_print_scale("http://example.test/?print_scale=fit&print_scale=noscale")
+
+    def test_fragment_is_preserved(self):
+        url = "http://example.test/label/1?print_scale=noscale#section"
+        cleaned, scale = extract_print_scale(url)
+        self.assertEqual(cleaned, "http://example.test/label/1#section")
+        self.assertEqual(scale, 'noscale')
+
+
+class BuildSumatraPrintSettingsTest(unittest.TestCase):
+    """SumatraPDF -print-settings 文字列組み立ての単体テスト (ADR 0002)"""
+
+    def test_noscale(self):
+        self.assertEqual(
+            build_sumatra_print_settings('noscale'),
+            'paper=MKラベル,portrait,noscale',
+        )
+
+    def test_fit(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit'),
+            'paper=MKラベル,portrait,fit',
+        )
+
+    def test_fixed_prefix_is_unchanged(self):
+        # 用紙フォーム名・向きの固定部が回帰しないことを保証
+        for scale in ('fit', 'noscale'):
+            self.assertTrue(
+                build_sumatra_print_settings(scale).startswith('paper=MKラベル,portrait,')
+            )
 
 
 if __name__ == '__main__':
