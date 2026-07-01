@@ -83,7 +83,8 @@ class QueueProcessor:
             success, message, retryable = self.printer_service.print_web_url(
                 job['PrintUrl'],
                 job['PrinterName'],
-                job_name
+                job_name,
+                printer_type=job.get('PrinterType', 'Label')
             )
 
             if success:

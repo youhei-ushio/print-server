@@ -32,7 +32,7 @@ class PrintServerConfig:
     CHROME_PATH = os.getenv('CHROME_PATH', '')
     PRINT_AUTH_TOKEN = os.getenv('PRINT_AUTH_TOKEN', '')
 
-    # Chrome印刷用引数
+    # Chrome印刷用引数（用紙サイズは printer_service で PrinterType に応じて動的付与）
     CHROME_ARGS = [
         '--headless=new',  # 新しいヘッドレスモード
         '--disable-gpu',
@@ -44,8 +44,9 @@ class PrintServerConfig:
         '--disable-default-apps',
         '--disable-extensions',
         '--disable-sync',
-        '--print-to-pdf-paper-width=3.14961'
     ]
+
+    LABEL_DEFAULT_PAPER_WIDTH_INCH = 3.14961  # 80mm
 
     # ログ設定
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
