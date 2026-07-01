@@ -7,6 +7,8 @@ build_sumatra_print_settings のユニットテスト
 import unittest
 from printer_service import (
     extract_paper_height,
+    extract_paper_width,
+    build_paper_width_default,
     build_chrome_command,
     extract_print_scale,
     build_sumatra_print_settings,
@@ -104,19 +106,19 @@ class ExtractPaperHeightTest(unittest.TestCase):
 class BuildChromeCommandTest(unittest.TestCase):
     """Chrome 引数組み立てロジックの単体テスト (subprocess を呼ばず純粋関数として検証)"""
 
-    BASE = ['chrome', '--headless=new', '--print-to-pdf-paper-width=3.14961']
+    BASE = ['chrome', '--headless=new']
 
     def test_with_paper_height_includes_arg_before_url(self):
         cmd = build_chrome_command(
             self.BASE,
             temp_pdf_path='/tmp/out.pdf',
+            paper_width_arg=None,
             paper_height_arg='--print-to-pdf-paper-height=9.84252',
             auth_print_url='http://example.test/label/1?print_token=abc',
         )
         self.assertEqual(cmd, [
             'chrome',
             '--headless=new',
-            '--print-to-pdf-paper-width=3.14961',
             '--print-to-pdf=/tmp/out.pdf',
             '--disable-print-preview',
             '--print-to-pdf-paper-height=9.84252',
@@ -127,25 +129,37 @@ class BuildChromeCommandTest(unittest.TestCase):
         cmd = build_chrome_command(
             self.BASE,
             temp_pdf_path='/tmp/out.pdf',
+            paper_width_arg=None,
             paper_height_arg=None,
             auth_print_url='http://example.test/label/1',
         )
         self.assertEqual(cmd, [
             'chrome',
             '--headless=new',
-            '--print-to-pdf-paper-width=3.14961',
             '--print-to-pdf=/tmp/out.pdf',
             '--disable-print-preview',
             'http://example.test/label/1',
         ])
-        # paper_height 引数が一切混入していないこと
         for token in cmd:
             self.assertFalse(token.startswith('--print-to-pdf-paper-height'))
+
+    def test_with_both_width_and_height(self):
+        cmd = build_chrome_command(
+            self.BASE,
+            temp_pdf_path='/tmp/out.pdf',
+            paper_width_arg='--print-to-pdf-paper-width=7.16535',
+            paper_height_arg='--print-to-pdf-paper-height=10.11811',
+            auth_print_url='http://example.test/label/1',
+        )
+        self.assertIn('--print-to-pdf-paper-width=7.16535', cmd)
+        self.assertIn('--print-to-pdf-paper-height=10.11811', cmd)
+        self.assertEqual(cmd[-1], 'http://example.test/label/1')
 
     def test_url_is_always_last(self):
         cmd = build_chrome_command(
             self.BASE,
             temp_pdf_path='/tmp/out.pdf',
+            paper_width_arg=None,
             paper_height_arg='--print-to-pdf-paper-height=1.96850',
             auth_print_url='http://example.test/x',
         )
@@ -156,6 +170,7 @@ class BuildChromeCommandTest(unittest.TestCase):
         build_chrome_command(
             base,
             temp_pdf_path='/tmp/out.pdf',
+            paper_width_arg=None,
             paper_height_arg='--print-to-pdf-paper-height=9.84252',
             auth_print_url='http://example.test/',
         )
@@ -233,8 +248,88 @@ class ExtractPrintScaleTest(unittest.TestCase):
         self.assertEqual(scale, 'noscale')
 
 
+class ExtractPaperWidthTest(unittest.TestCase):
+    """extract_paper_width の単体テスト (Issue #2589)"""
+
+    def test_omitted_query_returns_url_unchanged(self):
+        url = "http://example.test/print/label/1?print_token=abc"
+        cleaned, arg, label = extract_paper_width(url)
+        self.assertEqual(cleaned, url)
+        self.assertIsNone(arg)
+        self.assertEqual(label, 'omitted')
+
+    def test_auto_strips_query_and_omits_arg(self):
+        url = "http://example.test/print/label/1?paper_width=auto"
+        cleaned, arg, label = extract_paper_width(url)
+        self.assertEqual(cleaned, "http://example.test/print/label/1")
+        self.assertIsNone(arg)
+        self.assertEqual(label, 'auto')
+
+    def test_numeric_182mm_b5_converts_to_inch(self):
+        url = "http://example.test/?paper_width=182"
+        cleaned, arg, label = extract_paper_width(url)
+        self.assertEqual(arg, "--print-to-pdf-paper-width=7.16535")
+        self.assertEqual(label, '182mm')
+
+    def test_numeric_lower_bound_1mm(self):
+        _, arg, label = extract_paper_width("http://example.test/?paper_width=1")
+        self.assertEqual(arg, "--print-to-pdf-paper-width=0.03937")
+        self.assertEqual(label, '1mm')
+
+    def test_numeric_upper_bound_3000mm(self):
+        _, arg, label = extract_paper_width("http://example.test/?paper_width=3000")
+        self.assertEqual(arg, "--print-to-pdf-paper-width=118.11024")
+        self.assertEqual(label, '3000mm')
+
+    def test_zero_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_paper_width("http://example.test/?paper_width=0")
+
+    def test_over_max_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_paper_width("http://example.test/?paper_width=3001")
+
+    def test_non_numeric_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_paper_width("http://example.test/?paper_width=abc")
+
+    def test_multiple_paper_width_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_paper_width("http://example.test/?paper_width=182&paper_width=auto")
+
+    def test_preserves_other_query_params(self):
+        url = "http://example.test/?print_token=abc&paper_width=182&other=z"
+        cleaned, _, _ = extract_paper_width(url)
+        self.assertEqual(cleaned, "http://example.test/?print_token=abc&other=z")
+
+    def test_coexists_with_paper_height_via_chaining(self):
+        url = "http://example.test/?paper_width=182&paper_height=257&print_token=abc"
+        cleaned, w_arg, _ = extract_paper_width(url)
+        cleaned, h_arg, _ = extract_paper_height(cleaned)
+        self.assertEqual(cleaned, "http://example.test/?print_token=abc")
+        self.assertIn('7.16535', w_arg)
+        self.assertIn('10.11811', h_arg)
+
+
+class BuildPaperWidthDefaultTest(unittest.TestCase):
+    """build_paper_width_default の単体テスト (Issue #2589)"""
+
+    def test_label_returns_80mm_default(self):
+        arg = build_paper_width_default('Label')
+        self.assertEqual(arg, '--print-to-pdf-paper-width=3.14961')
+
+    def test_standard_returns_none(self):
+        self.assertIsNone(build_paper_width_default('Standard'))
+
+    def test_none_returns_none(self):
+        self.assertIsNone(build_paper_width_default(None))
+
+    def test_empty_string_returns_none(self):
+        self.assertIsNone(build_paper_width_default(''))
+
+
 class BuildSumatraPrintSettingsTest(unittest.TestCase):
-    """SumatraPDF -print-settings 文字列組み立ての単体テスト (ADR 0002)"""
+    """SumatraPDF -print-settings 文字列組み立ての単体テスト (ADR 0002, Issue #2589)"""
 
     def test_noscale(self):
         self.assertEqual(
@@ -249,11 +344,32 @@ class BuildSumatraPrintSettingsTest(unittest.TestCase):
         )
 
     def test_fixed_prefix_is_unchanged(self):
-        # 用紙フォーム名・向きの固定部が回帰しないことを保証
         for scale in ('fit', 'noscale'):
             self.assertTrue(
                 build_sumatra_print_settings(scale).startswith('paper=MKラベル,portrait,')
             )
+
+    def test_label_includes_paper_form(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit', 'Label'),
+            'paper=MKラベル,portrait,fit',
+        )
+
+    def test_standard_omits_paper_form(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit', 'Standard'),
+            'portrait,fit',
+        )
+
+    def test_standard_noscale(self):
+        self.assertEqual(
+            build_sumatra_print_settings('noscale', 'Standard'),
+            'portrait,noscale',
+        )
+
+    def test_none_printer_type_treated_as_standard(self):
+        result = build_sumatra_print_settings('fit', None)
+        self.assertEqual(result, 'portrait,fit')
 
 
 if __name__ == '__main__':

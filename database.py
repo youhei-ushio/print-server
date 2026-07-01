@@ -43,6 +43,7 @@ class DatabaseManager:
             pq.MaxRetryCount,
             pm.PrinterName,
             pm.DisplayName as PrinterDisplayName,
+            pm.PrinterType,
             pm.TimeoutSeconds
         FROM PrintQueue pq
         INNER JOIN PrinterMaster pm ON pq.PrinterId = pm.Id
@@ -68,6 +69,7 @@ class DatabaseManager:
                         'MaxRetryCount': row.MaxRetryCount,
                         'PrinterName': row.PrinterName,
                         'PrinterDisplayName': row.PrinterDisplayName,
+                        'PrinterType': row.PrinterType,
                         'TimeoutSeconds': row.TimeoutSeconds
                     })
                 

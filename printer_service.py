@@ -10,8 +10,8 @@ from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 from config import PrintServerConfig
 import os
 
-# paper_height クエリ仕様 (ADR docs/adr/0001-dynamic-paper-height.md)
-PAPER_HEIGHT_MAX_MM = 3000
+# paper_height / paper_width クエリ仕様 (ADR docs/adr/0001-dynamic-paper-height.md, Issue #2589)
+PAPER_SIZE_MAX_MM = 3000
 MM_PER_INCH = 25.4
 
 
@@ -51,28 +51,84 @@ def extract_paper_height(url: str) -> Tuple[str, Optional[str], str]:
     except ValueError:
         raise ValueError(f"paper_height must be 'auto' or an integer in mm: got {value!r}")
 
-    if mm < 1 or mm > PAPER_HEIGHT_MAX_MM:
-        raise ValueError(f"paper_height out of range (1..{PAPER_HEIGHT_MAX_MM} mm): {mm}")
+    if mm < 1 or mm > PAPER_SIZE_MAX_MM:
+        raise ValueError(f"paper_height out of range (1..{PAPER_SIZE_MAX_MM} mm): {mm}")
 
     inch = mm / MM_PER_INCH
     return cleaned_url, f"--print-to-pdf-paper-height={inch:.5f}", f"{mm}mm"
 
 
+def extract_paper_width(url: str) -> Tuple[str, Optional[str], str]:
+    """印刷 URL から paper_width クエリを取り出し、Chrome 引数と監査用ラベルを返す。
+
+    extract_paper_height と対称の API。Issue #2589 で追加。
+
+    Returns:
+        (cleaned_url, chrome_arg, log_label)
+
+    Raises:
+        ValueError: paper_width の値が仕様 (auto または 1..3000 の整数) を満たさないとき
+    """
+    parsed = urlparse(url)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+
+    paper_width_values = [v for k, v in query_pairs if k == 'paper_width']
+    remaining_pairs = [(k, v) for k, v in query_pairs if k != 'paper_width']
+
+    cleaned_url = urlunparse(parsed._replace(query=urlencode(remaining_pairs)))
+
+    if not paper_width_values:
+        return cleaned_url, None, 'omitted'
+
+    if len(paper_width_values) > 1:
+        raise ValueError(f"paper_width specified multiple times: {paper_width_values}")
+
+    value = paper_width_values[0].strip()
+
+    if value == 'auto':
+        return cleaned_url, None, 'auto'
+
+    try:
+        mm = int(value)
+    except ValueError:
+        raise ValueError(f"paper_width must be 'auto' or an integer in mm: got {value!r}")
+
+    if mm < 1 or mm > PAPER_SIZE_MAX_MM:
+        raise ValueError(f"paper_width out of range (1..{PAPER_SIZE_MAX_MM} mm): {mm}")
+
+    inch = mm / MM_PER_INCH
+    return cleaned_url, f"--print-to-pdf-paper-width={inch:.5f}", f"{mm}mm"
+
+
+def build_paper_width_default(printer_type: str) -> Optional[str]:
+    """PrinterType に応じたデフォルトの paper_width Chrome 引数を返す。
+
+    Label: 80mm (3.14961in) のハードコード値を維持。
+    Standard: None (Chrome が CSS @page size に従う)。
+    """
+    if printer_type == 'Label':
+        return f'--print-to-pdf-paper-width={PrintServerConfig.LABEL_DEFAULT_PAPER_WIDTH_INCH:.5f}'
+    return None
+
+
 def build_chrome_command(
     chrome_command_base: list,
     temp_pdf_path: str,
+    paper_width_arg: Optional[str],
     paper_height_arg: Optional[str],
     auth_print_url: str,
 ) -> list:
     """Chrome 実行コマンドの最終形を組み立てる。
 
-    paper_height_arg が None の場合は --print-to-pdf-paper-height を引数に含めない。
+    paper_width_arg / paper_height_arg が None の場合はそれぞれの引数を含めない。
     URL は常に最後尾。
     """
     extra_args = [
         f'--print-to-pdf={temp_pdf_path}',
         '--disable-print-preview',
     ]
+    if paper_width_arg:
+        extra_args.append(paper_width_arg)
     if paper_height_arg:
         extra_args.append(paper_height_arg)
     extra_args.append(auth_print_url)
@@ -120,13 +176,15 @@ def extract_print_scale(url: str) -> Tuple[str, str]:
     return cleaned_url, value
 
 
-def build_sumatra_print_settings(scale: str) -> str:
+def build_sumatra_print_settings(scale: str, printer_type: str = 'Label') -> str:
     """SumatraPDF の -print-settings 値を組み立てる。
 
-    用紙フォーム名・向きの固定部 'paper=MKラベル,portrait,' は不変で、末尾の縮尺
-    トークン (scale) のみを差し替える。'fit' が既定 (従来挙動)、'noscale' で等倍印刷。
+    Label: 用紙フォーム名 'paper=MKラベル' 付き (従来挙動)。
+    Standard: 用紙指定なし。プリンターのデフォルトトレイ用紙に従う。
     """
-    return f'paper=MKラベル,portrait,{scale}'
+    if printer_type == 'Label':
+        return f'paper=MKラベル,portrait,{scale}'
+    return f'portrait,{scale}'
 
 
 class PrinterService:
@@ -136,7 +194,7 @@ class PrinterService:
         self.config = PrintServerConfig()
         self.logger = logging.getLogger(__name__)
 
-    def print_web_url(self, print_url: str, printer_name: str, job_name: str = "Web Print") -> Tuple[bool, str, bool]:
+    def print_web_url(self, print_url: str, printer_name: str, job_name: str = "Web Print", printer_type: str = "Label") -> Tuple[bool, str, bool]:
         """Web URLを直接印刷
 
         Returns:
@@ -148,15 +206,33 @@ class PrinterService:
         try:
             self.logger.info(f"Starting web print job: {job_name}")
             self.logger.info(f"Print URL: {print_url}")
-            self.logger.info(f"Target printer: {printer_name}")
+            self.logger.info(f"Target printer: {printer_name} (type: {printer_type})")
+
+            # paper_width クエリを抽出 (Issue #2589)
+            try:
+                cleaned_url, paper_width_arg, paper_width_label = extract_paper_width(print_url)
+            except ValueError as e:
+                error_msg = f"invalid paper_width: {e}"
+                self.logger.error(error_msg)
+                return False, error_msg, False
+
+            # paper_width 未指定時は PrinterType のデフォルトを適用
+            if paper_width_arg is None and paper_width_label == 'omitted':
+                paper_width_arg = build_paper_width_default(printer_type)
+                paper_width_label = 'default' if paper_width_arg else 'omitted(Standard)'
+
+            if paper_width_arg:
+                self.logger.info(f"paper_width: {paper_width_label} -> {paper_width_arg}")
+            else:
+                self.logger.info(f"paper_width: {paper_width_label} (--print-to-pdf-paper-width omitted)")
 
             # paper_height クエリを抽出 (ADR 0001)
             try:
-                cleaned_url, paper_height_arg, paper_height_label = extract_paper_height(print_url)
+                cleaned_url, paper_height_arg, paper_height_label = extract_paper_height(cleaned_url)
             except ValueError as e:
                 error_msg = f"invalid paper_height: {e}"
                 self.logger.error(error_msg)
-                return False, error_msg, False  # 入力が直らない限り再試行しても無駄
+                return False, error_msg, False
 
             if paper_height_arg:
                 self.logger.info(f"paper_height: {paper_height_label} -> {paper_height_arg}")
@@ -169,7 +245,7 @@ class PrinterService:
             except ValueError as e:
                 error_msg = f"invalid print_scale: {e}"
                 self.logger.error(error_msg)
-                return False, error_msg, False  # 入力が直らない限り再試行しても無駄
+                return False, error_msg, False
             self.logger.info(f"print_scale: {print_scale}")
 
             # 印刷用URLに認証トークンを追加
@@ -182,10 +258,11 @@ class PrinterService:
             temp_pdf_path = temp_pdf.name
             temp_pdf.close()
 
-            # Chrome実行コマンドを組み立て (paper_height は paper_height_arg がある場合のみ追加)
+            # Chrome実行コマンドを組み立て
             chrome_command = build_chrome_command(
                 self.config.chrome_command_base,
                 temp_pdf_path,
+                paper_width_arg,
                 paper_height_arg,
                 auth_print_url,
             )
@@ -260,7 +337,7 @@ class PrinterService:
 
                 try:
                     # PDFをプリンターに送信（Windows）
-                    if self._print_pdf_to_printer(temp_pdf_path, printer_name, print_scale):
+                    if self._print_pdf_to_printer(temp_pdf_path, printer_name, print_scale, printer_type):
                         self.logger.info(f"PDF printed successfully to {printer_name}")
                         return True, "Web印刷完了", True
                     else:
@@ -311,11 +388,12 @@ class PrinterService:
         # 認証トークンが設定されていない場合は元のURLをそのまま返す
         return print_url
 
-    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE) -> bool:
+    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE, printer_type: str = "Label") -> bool:
         """PDFファイルをプリンターに送信（Windows）。
 
         scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
                梱包ラベル等の可変長ロール紙を等倍印刷したいときは 'noscale' を渡す。
+        printer_type: 'Label' or 'Standard'。SumatraPDF の用紙設定に影響する。
         """
         try:
             import platform
@@ -342,7 +420,7 @@ class PrinterService:
                     print_command = [
                         pdf_reader,
                         '-print-to', printer_name,
-                        '-print-settings', build_sumatra_print_settings(scale),
+                        '-print-settings', build_sumatra_print_settings(scale, printer_type),
                         '-silent',
                         pdf_path
                     ]
