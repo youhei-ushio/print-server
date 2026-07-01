@@ -107,7 +107,7 @@ def build_paper_width_default(printer_type: str) -> Optional[str]:
     Standard: None (Chrome が CSS @page size に従う)。
     """
     if printer_type == 'Label':
-        return f'--print-to-pdf-paper-width={PrintServerConfig.LABEL_DEFAULT_PAPER_WIDTH_INCH}'
+        return f'--print-to-pdf-paper-width={PrintServerConfig.LABEL_DEFAULT_PAPER_WIDTH_INCH:.5f}'
     return None
 
 
@@ -221,8 +221,10 @@ class PrinterService:
                 paper_width_arg = build_paper_width_default(printer_type)
                 paper_width_label = 'default' if paper_width_arg else 'omitted(Standard)'
 
-            self.logger.info(f"paper_width: {paper_width_label}" +
-                           (f" -> {paper_width_arg}" if paper_width_arg else " (omitted)"))
+            if paper_width_arg:
+                self.logger.info(f"paper_width: {paper_width_label} -> {paper_width_arg}")
+            else:
+                self.logger.info(f"paper_width: {paper_width_label} (--print-to-pdf-paper-width omitted)")
 
             # paper_height クエリを抽出 (ADR 0001)
             try:
@@ -390,6 +392,7 @@ class PrinterService:
         """PDFファイルをプリンターに送信（Windows）。
 
         scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
+               梱包ラベル等の可変長ロール紙を等倍印刷したいときは 'noscale' を渡す。
         printer_type: 'Label' or 'Standard'。SumatraPDF の用紙設定に影響する。
         """
         try:

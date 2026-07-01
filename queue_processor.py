@@ -84,7 +84,7 @@ class QueueProcessor:
                 job['PrintUrl'],
                 job['PrinterName'],
                 job_name,
-                printer_type=job.get('PrinterType', 'Label')
+                printer_type=job.get('PrinterType') or 'Label'
             )
 
             if success:
