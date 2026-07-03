@@ -12,6 +12,8 @@ from printer_service import (
     build_chrome_command,
     extract_print_scale,
     build_sumatra_print_settings,
+    resolve_paper_name,
+    _parse_mm_from_label,
 )
 
 
@@ -370,6 +372,86 @@ class BuildSumatraPrintSettingsTest(unittest.TestCase):
     def test_none_printer_type_treated_as_standard(self):
         result = build_sumatra_print_settings('fit', None)
         self.assertEqual(result, 'portrait,fit')
+
+    def test_standard_with_paper_name_b5(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit', 'Standard', 'B5 (JIS)'),
+            'paper=B5 (JIS),portrait,fit',
+        )
+
+    def test_standard_with_paper_name_a4(self):
+        self.assertEqual(
+            build_sumatra_print_settings('noscale', 'Standard', 'A4'),
+            'paper=A4,portrait,noscale',
+        )
+
+    def test_label_ignores_paper_name(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit', 'Label', 'B5 (JIS)'),
+            'paper=MKラベル,portrait,fit',
+        )
+
+    def test_standard_without_paper_name(self):
+        self.assertEqual(
+            build_sumatra_print_settings('fit', 'Standard', None),
+            'portrait,fit',
+        )
+
+
+class ResolvePaperNameTest(unittest.TestCase):
+    """resolve_paper_name の単体テスト (Issue #5)"""
+
+    def test_b5_portrait(self):
+        self.assertEqual(resolve_paper_name(182, 257), 'B5 (JIS)')
+
+    def test_b5_landscape(self):
+        self.assertEqual(resolve_paper_name(257, 182), 'B5 (JIS)')
+
+    def test_a4_portrait(self):
+        self.assertEqual(resolve_paper_name(210, 297), 'A4')
+
+    def test_a4_landscape(self):
+        self.assertEqual(resolve_paper_name(297, 210), 'A4')
+
+    def test_a5_portrait(self):
+        self.assertEqual(resolve_paper_name(148, 210), 'A5')
+
+    def test_b4_portrait(self):
+        self.assertEqual(resolve_paper_name(257, 364), 'B4 (JIS)')
+
+    def test_unknown_size_returns_none(self):
+        self.assertIsNone(resolve_paper_name(100, 200))
+
+    def test_none_width_returns_none(self):
+        self.assertIsNone(resolve_paper_name(None, 257))
+
+    def test_none_height_returns_none(self):
+        self.assertIsNone(resolve_paper_name(182, None))
+
+    def test_both_none_returns_none(self):
+        self.assertIsNone(resolve_paper_name(None, None))
+
+
+class ParseMmFromLabelTest(unittest.TestCase):
+    """_parse_mm_from_label の単体テスト (Issue #5)"""
+
+    def test_valid_mm_label(self):
+        self.assertEqual(_parse_mm_from_label('182mm'), 182)
+
+    def test_valid_mm_label_257(self):
+        self.assertEqual(_parse_mm_from_label('257mm'), 257)
+
+    def test_omitted_returns_none(self):
+        self.assertIsNone(_parse_mm_from_label('omitted'))
+
+    def test_auto_returns_none(self):
+        self.assertIsNone(_parse_mm_from_label('auto'))
+
+    def test_default_returns_none(self):
+        self.assertIsNone(_parse_mm_from_label('default'))
+
+    def test_omitted_standard_returns_none(self):
+        self.assertIsNone(_parse_mm_from_label('omitted(Standard)'))
 
 
 if __name__ == '__main__':

@@ -176,14 +176,48 @@ def extract_print_scale(url: str) -> Tuple[str, str]:
     return cleaned_url, value
 
 
-def build_sumatra_print_settings(scale: str, printer_type: str = 'Label') -> str:
+KNOWN_PAPER_SIZES = {
+    (182, 257): 'B5 (JIS)',
+    (257, 182): 'B5 (JIS)',
+    (210, 297): 'A4',
+    (297, 210): 'A4',
+    (148, 210): 'A5',
+    (210, 148): 'A5',
+    (257, 364): 'B4 (JIS)',
+    (364, 257): 'B4 (JIS)',
+}
+
+
+def resolve_paper_name(width_mm: Optional[int], height_mm: Optional[int]) -> Optional[str]:
+    """用紙寸法 (mm) から SumatraPDF の Windows 用紙フォーム名を解決する。
+
+    既知サイズ (B5, A4 等) にマッチすれば名前を返し、未知なら None。
+    """
+    if width_mm is None or height_mm is None:
+        return None
+    return KNOWN_PAPER_SIZES.get((width_mm, height_mm))
+
+
+def _parse_mm_from_label(label: str) -> Optional[int]:
+    """ログラベル ('182mm' 等) から mm 整数値を取り出す。"""
+    if label.endswith('mm'):
+        try:
+            return int(label[:-2])
+        except ValueError:
+            return None
+    return None
+
+
+def build_sumatra_print_settings(scale: str, printer_type: str = 'Label', paper_name: Optional[str] = None) -> str:
     """SumatraPDF の -print-settings 値を組み立てる。
 
     Label: 用紙フォーム名 'paper=MKラベル' 付き (従来挙動)。
-    Standard: 用紙指定なし。プリンターのデフォルトトレイ用紙に従う。
+    Standard: paper_name があれば 'paper=<name>' 付き、なければプリンターデフォルト。
     """
     if printer_type == 'Label':
         return f'paper=MKラベル,portrait,{scale}'
+    if paper_name:
+        return f'paper={paper_name},portrait,{scale}'
     return f'portrait,{scale}'
 
 
@@ -247,6 +281,16 @@ class PrinterService:
                 self.logger.error(error_msg)
                 return False, error_msg, False
             self.logger.info(f"print_scale: {print_scale}")
+
+            # SumatraPDF 用紙名を解決 (Issue #5)
+            paper_name = resolve_paper_name(
+                _parse_mm_from_label(paper_width_label),
+                _parse_mm_from_label(paper_height_label),
+            )
+            if paper_name:
+                self.logger.info(f"paper_name: {paper_name}")
+            else:
+                self.logger.info("paper_name: unresolved (printer default)")
 
             # 印刷用URLに認証トークンを追加
             auth_print_url = self._add_auth_token(cleaned_url)
@@ -337,7 +381,7 @@ class PrinterService:
 
                 try:
                     # PDFをプリンターに送信（Windows）
-                    if self._print_pdf_to_printer(temp_pdf_path, printer_name, print_scale, printer_type):
+                    if self._print_pdf_to_printer(temp_pdf_path, printer_name, print_scale, printer_type, paper_name):
                         self.logger.info(f"PDF printed successfully to {printer_name}")
                         return True, "Web印刷完了", True
                     else:
@@ -388,12 +432,13 @@ class PrinterService:
         # 認証トークンが設定されていない場合は元のURLをそのまま返す
         return print_url
 
-    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE, printer_type: str = "Label") -> bool:
+    def _print_pdf_to_printer(self, pdf_path: str, printer_name: str, scale: str = DEFAULT_PRINT_SCALE, printer_type: str = "Label", paper_name: Optional[str] = None) -> bool:
         """PDFファイルをプリンターに送信（Windows）。
 
         scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
                梱包ラベル等の可変長ロール紙を等倍印刷したいときは 'noscale' を渡す。
         printer_type: 'Label' or 'Standard'。SumatraPDF の用紙設定に影響する。
+        paper_name: SumatraPDF に渡す用紙フォーム名 (例: 'B5 (JIS)')。Standard のみ有効。
         """
         try:
             import platform
@@ -420,7 +465,7 @@ class PrinterService:
                     print_command = [
                         pdf_reader,
                         '-print-to', printer_name,
-                        '-print-settings', build_sumatra_print_settings(scale, printer_type),
+                        '-print-settings', build_sumatra_print_settings(scale, printer_type, paper_name),
                         '-silent',
                         pdf_path
                     ]
