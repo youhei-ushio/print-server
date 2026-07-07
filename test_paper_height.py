@@ -373,21 +373,21 @@ class BuildSumatraPrintSettingsTest(unittest.TestCase):
         result = build_sumatra_print_settings('fit', None)
         self.assertEqual(result, 'portrait,fit')
 
-    def test_standard_with_paper_name_b5(self):
+    def test_standard_with_paper_id_b5(self):
         self.assertEqual(
-            build_sumatra_print_settings('fit', 'Standard', 'B5 (JIS)'),
-            'paper=B5 (JIS),portrait,fit',
+            build_sumatra_print_settings('fit', 'Standard', '13'),
+            'paper=13,portrait,fit',
         )
 
-    def test_standard_with_paper_name_a4(self):
+    def test_standard_with_paper_id_a4(self):
         self.assertEqual(
-            build_sumatra_print_settings('noscale', 'Standard', 'A4'),
-            'paper=A4,portrait,noscale',
+            build_sumatra_print_settings('noscale', 'Standard', '9'),
+            'paper=9,portrait,noscale',
         )
 
     def test_label_ignores_paper_name(self):
         self.assertEqual(
-            build_sumatra_print_settings('fit', 'Label', 'B5 (JIS)'),
+            build_sumatra_print_settings('fit', 'Label', '13'),
             'paper=MKラベル,portrait,fit',
         )
 
@@ -402,22 +402,22 @@ class ResolvePaperNameTest(unittest.TestCase):
     """resolve_paper_name の単体テスト (Issue #5)"""
 
     def test_b5_portrait(self):
-        self.assertEqual(resolve_paper_name(182, 257), 'B5 (JIS)')
+        self.assertEqual(resolve_paper_name(182, 257), '13')
 
     def test_b5_landscape(self):
-        self.assertEqual(resolve_paper_name(257, 182), 'B5 (JIS)')
+        self.assertEqual(resolve_paper_name(257, 182), '13')
 
     def test_a4_portrait(self):
-        self.assertEqual(resolve_paper_name(210, 297), 'A4')
+        self.assertEqual(resolve_paper_name(210, 297), '9')
 
     def test_a4_landscape(self):
-        self.assertEqual(resolve_paper_name(297, 210), 'A4')
+        self.assertEqual(resolve_paper_name(297, 210), '9')
 
     def test_a5_portrait(self):
-        self.assertEqual(resolve_paper_name(148, 210), 'A5')
+        self.assertEqual(resolve_paper_name(148, 210), '11')
 
     def test_b4_portrait(self):
-        self.assertEqual(resolve_paper_name(257, 364), 'B4 (JIS)')
+        self.assertEqual(resolve_paper_name(257, 364), '12')
 
     def test_unknown_size_returns_none(self):
         self.assertIsNone(resolve_paper_name(100, 200))
