@@ -375,8 +375,8 @@ class BuildSumatraPrintSettingsTest(unittest.TestCase):
 
     def test_standard_with_paper_name_b5(self):
         self.assertEqual(
-            build_sumatra_print_settings('fit', 'Standard', 'B5 (JIS)'),
-            'paper=B5 (JIS),portrait,fit',
+            build_sumatra_print_settings('fit', 'Standard', 'B5'),
+            'paper=B5,portrait,fit',
         )
 
     def test_standard_with_paper_name_a4(self):
@@ -387,7 +387,7 @@ class BuildSumatraPrintSettingsTest(unittest.TestCase):
 
     def test_label_ignores_paper_name(self):
         self.assertEqual(
-            build_sumatra_print_settings('fit', 'Label', 'B5 (JIS)'),
+            build_sumatra_print_settings('fit', 'Label', 'B5'),
             'paper=MKラベル,portrait,fit',
         )
 
@@ -402,10 +402,10 @@ class ResolvePaperNameTest(unittest.TestCase):
     """resolve_paper_name の単体テスト (Issue #5)"""
 
     def test_b5_portrait(self):
-        self.assertEqual(resolve_paper_name(182, 257), 'B5 (JIS)')
+        self.assertEqual(resolve_paper_name(182, 257), 'B5')
 
     def test_b5_landscape(self):
-        self.assertEqual(resolve_paper_name(257, 182), 'B5 (JIS)')
+        self.assertEqual(resolve_paper_name(257, 182), 'B5')
 
     def test_a4_portrait(self):
         self.assertEqual(resolve_paper_name(210, 297), 'A4')
@@ -417,7 +417,7 @@ class ResolvePaperNameTest(unittest.TestCase):
         self.assertEqual(resolve_paper_name(148, 210), 'A5')
 
     def test_b4_portrait(self):
-        self.assertEqual(resolve_paper_name(257, 364), 'B4 (JIS)')
+        self.assertEqual(resolve_paper_name(257, 364), 'B4')
 
     def test_unknown_size_returns_none(self):
         self.assertIsNone(resolve_paper_name(100, 200))

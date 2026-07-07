@@ -177,14 +177,14 @@ def extract_print_scale(url: str) -> Tuple[str, str]:
 
 
 KNOWN_PAPER_SIZES = {
-    (182, 257): 'B5 (JIS)',
-    (257, 182): 'B5 (JIS)',
+    (182, 257): 'B5',
+    (257, 182): 'B5',
     (210, 297): 'A4',
     (297, 210): 'A4',
     (148, 210): 'A5',
     (210, 148): 'A5',
-    (257, 364): 'B4 (JIS)',
-    (364, 257): 'B4 (JIS)',
+    (257, 364): 'B4',
+    (364, 257): 'B4',
 }
 
 
@@ -438,7 +438,7 @@ class PrinterService:
         scale: SumatraPDF の縮尺トークン ('fit' 既定 / 'noscale')。
                梱包ラベル等の可変長ロール紙を等倍印刷したいときは 'noscale' を渡す。
         printer_type: 'Label' or 'Standard'。SumatraPDF の用紙設定に影響する。
-        paper_name: SumatraPDF に渡す用紙フォーム名 (例: 'B5 (JIS)')。Standard のみ有効。
+        paper_name: SumatraPDF に渡す用紙フォーム名 (例: 'B5')。Standard のみ有効。
         """
         try:
             import platform
